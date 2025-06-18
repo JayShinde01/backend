@@ -1,0 +1,42 @@
+# Logs
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+# Runtime data
+pids
+*.pid
+*.seed
+*.pid.lock
+
+# Dependency directories
+node_modules/
+
+# Environment files
+.env
+
+# Database files (if generated or local)
+*.sqlite
+*.sqlite3
+*.db
+*.db-journal
+
+# Build / dist output
+dist/
+build/
+
+# Editor & OS files
+.DS_Store
+.vscode/
+.idea/
+*.swp
+*.swo
+*.bak
+*.tmp
+
+# Optional: uploads (only if dynamically generated and not needed in Git)
+uploads/
