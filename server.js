@@ -1,75 +1,143 @@
+require("dotenv").config();
+
 const express = require("express");
 const mysql = require("mysql2");
 const cors = require("cors");
+const jwt = require("jsonwebtoken");
+const bcrypt = require("bcrypt");
 const bodyParser = require("body-parser");
 const multer = require("multer");
 const path = require("path");
 const fs = require("fs");
-const { log } = require("console");
 
 const app = express();
-const PORT = 3000;
+const PORT = process.env.PORT || 3000;
+const JWT_SECRET = process.env.JWT_SECRET;
 
-// ✅ Middleware
+// Middleware
 app.use(cors());
 app.use(bodyParser.json());
 app.use("/uploads", express.static(path.join(__dirname, "uploads")));
 
-// ✅ MySQL Database Connection
-const db = mysql.createConnection({
-  host: "localhost",
-  user: "root",
-  password: "root@12345",
-  database: "inventary_db",
-  port: 3306,
-});
-
-db.connect((err) => {
-  if (err) {
-    console.error("❌ Database connection failed:", err);
-    process.exit(1);
-  }
-  console.log("✅ Connected to MySQL Database");
-});
-
-// ✅ Ensure 'uploads/' directory exists
+// Ensure uploads directory exists
 const uploadDir = path.join(__dirname, "uploads");
 if (!fs.existsSync(uploadDir)) {
   fs.mkdirSync(uploadDir, { recursive: true });
 }
 
-// ✅ Configure Multer for File Uploads
+// Multer setup
 const storage = multer.diskStorage({
   destination: (req, file, cb) => cb(null, "uploads/"),
   filename: (req, file, cb) => cb(null, Date.now() + "_" + file.originalname),
 });
-
-const upload = multer({ 
+const upload = multer({
   storage,
   fileFilter: (req, file, cb) => {
     const allowedTypes = /jpeg|jpg|png|gif/;
     const isValidExt = allowedTypes.test(path.extname(file.originalname).toLowerCase());
     const isValidMime = allowedTypes.test(file.mimetype);
-    isValidExt && isValidMime ? cb(null, true) : cb(new Error("Only images (jpeg, jpg, png, gif) are allowed"));
+    isValidExt && isValidMime ? cb(null, true) : cb(new Error("Only image files are allowed"));
   },
 });
 
-// ✅ Route: Test API
-app.get("/", (req, res) => res.send("🚀 Backend is running!"));
+// MySQL connection
+const db = mysql.createConnection({
+  host: process.env.DB_HOST,
+  user: process.env.DB_USER,
+  password: process.env.DB_PASSWORD,
+  database: process.env.DB_NAME,
+  port: process.env.DB_PORT,
+});
 
-// ✅ Route: Login API
+db.connect((err) => {
+  if (err) {
+    console.error("❌ Database connection failed:", err.message);
+    process.exit(1);
+  }
+  console.log("✅ Connected to MySQL Database.");
+});
+
+// Test API
+app.get("/", (req, res) => {
+  res.send("🚀 Backend is running!");
+});
+
+// Register
+app.post("/register", async (req, res) => {
+  const { loginid, password } = req.body;
+  if (!loginid || !password)
+    return res.status(400).json({ success: false, message: "Missing login ID or password" });
+
+  try {
+    const hashedPassword = await bcrypt.hash(password, 10);
+    const sql = "INSERT INTO users (loginid, password) VALUES (?, ?)";
+    db.query(sql, [loginid, hashedPassword], (err) => {
+      if (err) {
+        console.error(err);
+        return res.status(500).json({ success: false, message: "User already exists or DB error" });
+      }
+      res.json({ success: true, message: "User registered successfully" });
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, message: "Server error", error });
+  }
+});
+
+// Login
 app.post("/login", (req, res) => {
   const { loginid, password } = req.body;
-  if (!loginid || !password) return res.status(400).json({ success: false, message: "Missing credentials" });
+  if (!loginid || !password)
+    return res.status(400).json({ success: false, message: "Missing credentials" });
 
-  const sql = "SELECT * FROM users WHERE loginid = ? AND password = ?";
-  db.query(sql, [loginid, password], (err, results) => {
-    if (err) return res.status(500).json({ success: false, message: "Database error", error: err });
-    results.length > 0
-      ? res.json({ success: true, message: "Login successful", token: "sample_token" })
-      : res.status(401).json({ success: false, message: "Invalid credentials" });
+  const sql = "SELECT * FROM users WHERE loginid = ?";
+  db.query(sql, [loginid], async (err, results) => {
+    if (err) return res.status(500).json({ success: false, message: "Database error" });
+
+    if (results.length > 0) {
+      const user = results[0];
+      const match = await bcrypt.compare(password, user.password);
+      if (match) {
+        const token = jwt.sign({ userId: user.id }, JWT_SECRET, { expiresIn: "1h" });
+        return res.json({ success: true, token });
+      } else {
+        return res.status(401).json({ success: false, message: "Invalid password" });
+      }
+    } else {
+      res.status(404).json({ success: false, message: "User not found" });
+    }
   });
 });
+
+// JWT middleware
+const verifyToken = (req, res, next) => {
+  const token = req.headers.authorization?.split(" ")[1];
+  if (!token) return res.status(401).json({ success: false, message: "Token missing" });
+
+  jwt.verify(token, JWT_SECRET, (err, decoded) => {
+    if (err) return res.status(403).json({ success: false, message: "Invalid Token" });
+    req.userId = decoded.userId;
+    next();
+  });
+};
+
+// Protected route
+app.get("/protected", verifyToken, (req, res) => {
+  res.json({ success: true, message: "Access granted", userId: req.userId });
+});
+
+// Upload route
+app.post("/upload", upload.single("image"), (req, res) => {
+  if (!req.file) {
+    return res.status(400).json({ success: false, message: "No file uploaded" });
+  }
+  res.json({ success: true, filePath: `/uploads/${req.file.filename}` });
+});
+
+// Start server
+app.listen(PORT, () => {
+  console.log(`🚀 Server running on http://localhost:${PORT}`);
+});
+
 
 // ✅ CRUD Operations: Items
 app.route("/api/items")
